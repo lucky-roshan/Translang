@@ -1,0 +1,549 @@
+{
+  "languages": [
+    { "code": "en", "name": "English" },
+    { "code": "es", "name": "Spanish" },
+    ...
+  ]
+}
+{
+  "text": "Hello world",
+  "from": "en",
+  "to": "es"
+}
+{
+  "translatedText": "Hola mundo",
+  "detectedLanguage": "en"
+}
+import { Hono } from "https://esm.sh/hono@3.11.7";
+import { readFile, serveFile } from "https://esm.town/v/std/utils@85-main/index.ts";
+import type { TranslationRequest, TranslationResponse, SupportedLanguagesResponse, VoicesResponse, Voice } from "../shared/types.ts";
+import { SUPPORTED_LANGUAGES } from "../shared/languages.ts";
+
+const app = new Hono();
+
+// Unwrap Hono errors to see original error details
+app.onError((err, c) => {
+  throw err;
+});
+
+// Serve static files
+app.get("/frontend/*", c => serveFile(c.req.path, import.meta.url));
+app.get("/shared/*", c => serveFile(c.req.path, import.meta.url));
+
+// Serve main page
+app.get("/", async c => {
+  const html = await readFile("/frontend/index.html", import.meta.url);
+  return c.html(html);
+});
+
+// Get supported languages
+app.get("/api/languages", async c => {
+  const response: SupportedLanguagesResponse = {
+    languages: SUPPORTED_LANGUAGES
+  };
+  return c.json(response);
+});
+
+// Get available voices for text-to-speech
+app.get("/api/voices", async c => {
+  // This would typically come from a TTS service, but for demo purposes
+  // we'll return a basic set of voices that work with Web Speech API
+  const voices: Voice[] = [
+    // English voices
+    { name: "Google US English", lang: "en-US", gender: "female", accent: "American", quality: "standard" },
+    { name: "Google UK English Male", lang: "en-GB", gender: "male", accent: "British", quality: "standard" },
+    { name: "Google UK English Female", lang: "en-GB", gender: "female", accent: "British", quality: "standard" },
+    { name: "Google Australian English", lang: "en-AU", gender: "female", accent: "Australian", quality: "standard" },
+    { name: "Google Indian English", lang: "en-IN", gender: "female", accent: "Indian", quality: "standard" },
+    
+    // Indian Regional Languages
+    { name: "Google हिन्दी", lang: "hi-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google తెలుగు", lang: "te-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google मराठी", lang: "mr-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google தமிழ்", lang: "ta-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google বাংলা", lang: "bn-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google ગુજરાતી", lang: "gu-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google ಕನ್ನಡ", lang: "kn-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google മലയാളം", lang: "ml-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google ਪੰਜਾਬੀ", lang: "pa-IN", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google اردو", lang: "ur-IN", gender: "female", accent: "Standard", quality: "standard" },
+    
+    // Other major languages
+    { name: "Google Español", lang: "es-ES", gender: "female", accent: "European", quality: "standard" },
+    { name: "Google Español (Latinoamérica)", lang: "es-US", gender: "female", accent: "Latin American", quality: "standard" },
+    { name: "Google Français", lang: "fr-FR", gender: "female", accent: "Metropolitan", quality: "standard" },
+    { name: "Google Deutsch", lang: "de-DE", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google Italiano", lang: "it-IT", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google Português (Brasil)", lang: "pt-BR", gender: "female", accent: "Brazilian", quality: "standard" },
+    { name: "Google Русский", lang: "ru-RU", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google 日本語", lang: "ja-JP", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google 한국어", lang: "ko-KR", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google 中文 (普通话)", lang: "zh-CN", gender: "female", accent: "Mandarin", quality: "standard" },
+    { name: "Google العربية", lang: "ar-SA", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google ไทย", lang: "th-TH", gender: "female", accent: "Standard", quality: "standard" },
+    { name: "Google Tiếng Việt", lang: "vi-VN", gender: "female", accent: "Standard", quality: "standard" },
+  ];
+
+  const response: VoicesResponse = {
+    voices
+  };
+  return c.json(response);
+});
+
+// Translation endpoint using Google Translate
+app.post("/api/translate", async c => {
+  try {
+    const body: TranslationRequest = await c.req.json();
+    const { text, from, to } = body;
+
+    if (!text || !to) {
+      return c.json({ error: "Missing required fields: text, to" }, 400);
+    }
+
+    // Use Google Translate API via a free service
+    let url: string;
+    if (from === "auto") {
+      url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${to}&dt=t&q=${encodeURIComponent(text)}`;
+    } else {
+      url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${from}&tl=${to}&dt=t&q=${encodeURIComponent(text)}`;
+    }
+    
+    const response = await fetch(url);
+    
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+    
+    const data = await response.json();
+    
+    if (!data || !Array.isArray(data) || !data[0] || !Array.isArray(data[0])) {
+      throw new Error("Invalid response from translation service");
+    }
+
+    // Extract translated text
+    let translatedText = "";
+    for (const item of data[0]) {
+      if (item && item[0]) {
+        translatedText += item[0];
+      }
+    }
+    
+    if (!translatedText.trim()) {
+      throw new Error("No translation received");
+    }
+    
+    // Extract detected language if auto-detect was used
+    let detectedLanguage = from;
+    if (from === "auto" && data.length > 2 && data[2]) {
+      detectedLanguage = data[2];
+    }
+
+    const result: TranslationResponse = {
+      translatedText,
+      detectedLanguage: from === "auto" ? detectedLanguage : undefined
+    };
+
+    return c.json(result);
+  } catch (error) {
+    console.error("Translation error:", error);
+    return c.json({ error: "Translation failed" }, 500);
+  }
+});
+
+export default app.fetch;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Speech & Text Translator</title>
+    <meta name="description" content="Translate speech and text between 100+ languages including regional languages like Telugu, Marathi, Tamil, Hindi with native pronunciation">
+    <script src="https://cdn.twind.style" crossorigin></script>
+    <script src="https://esm.town/v/std/catch"></script>
+    <link rel="stylesheet" href="/frontend/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎤</text></svg>">
+</head>
+<body class="bg-gray-50 min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/frontend/index.tsx"></script>
+</body>
+</html>
+/** @jsxImportSource https://esm.sh/react@18.2.0 */
+import React from "https://esm.sh/react@18.2.0?deps=react@18.2.0";
+import { createRoot } from "https://esm.sh/react-dom@18.2.0/client?deps=react@18.2.0,react-dom@18.2.0";
+import App from "./components/App.tsx";
+
+const root = createRoot(document.getElementById("root")!);
+root.render(<App />);
+/* Custom styles for the advanced speech & text translation app */
+
+.speaker-button {
+  transition: all 0.2s ease;
+}
+
+.speaker-button:hover {
+  transform: scale(1.1);
+}
+
+.speaker-button:active {
+  transform: scale(0.95);
+}
+
+.translation-card {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+  transition: box-shadow 0.3s ease;
+}
+
+.translation-card:hover {
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+}
+
+.pulse-animation {
+  animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
+.fade-in {
+  animation: fadeIn 0.5s ease-in;
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Speech recognition specific styles */
+.speech-button {
+  position: relative;
+  overflow: hidden;
+}
+
+.speech-button.listening {
+  animation: speechPulse 1.5s ease-in-out infinite;
+}
+
+@keyframes speechPulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(239, 68, 68, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0);
+  }
+}
+
+/* Voice selector styles */
+.voice-selector {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 8px;
+  padding: 1rem;
+  color: white;
+}
+
+.voice-selector select {
+  background: rgba(255, 255, 255, 0.9);
+  color: #333;
+}
+
+/* Language group styles */
+optgroup {
+  font-weight: bold;
+  color: #374151;
+  background: #f9fafb;
+}
+
+option {
+  font-weight: normal;
+  color: #111827;
+  background: white;
+  padding: 0.25rem;
+}
+
+/* Regional language support indicator */
+.regional-support {
+  background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 50%, #fecfef 100%);
+  border: 2px solid #f472b6;
+}
+
+/* Accessibility improvements */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* Focus styles for better accessibility */
+button:focus,
+select:focus,
+textarea:focus {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}
+
+/* Loading spinner */
+.spinner {
+  border: 2px solid #f3f3f3;
+  border-top: 2px solid #3b82f6;
+  border-radius: 50%;
+  width: 20px;
+  height: 20px;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Mode toggle buttons */
+.mode-toggle {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  transition: all 0.3s ease;
+}
+
+.mode-toggle:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+}
+
+/* Interim transcript styling */
+.interim-transcript {
+  background: linear-gradient(90deg, #fef3c7, #fde68a);
+  border-left: 4px solid #f59e0b;
+  animation: fadeIn 0.3s ease-in;
+}
+
+/* Native script support */
+.native-script {
+  font-family: 'Noto Sans', 'Noto Sans Devanagari', 'Noto Sans Telugu', 'Noto Sans Tamil', 'Noto Sans Bengali', 'Noto Sans Gujarati', 'Noto Sans Kannada', 'Noto Sans Malayalam', 'Noto Sans Gurmukhi', 'Noto Sans Arabic', sans-serif;
+  line-height: 1.6;
+}
+
+/* Responsive design improvements */
+@media (max-width: 768px) {
+  .translation-card {
+    margin-bottom: 1rem;
+  }
+  
+  .speech-button {
+    padding: 0.75rem;
+  }
+  
+  .mode-toggle {
+    padding: 0.5rem 1rem;
+    font-size: 0.875rem;
+  }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+  .translation-card {
+    border: 2px solid #000;
+  }
+  
+  .speaker-button {
+    border: 2px solid currentColor;
+  }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+  .speaker-button,
+  .mode-toggle,
+  .fade-in,
+  .pulse-animation,
+  .speechPulse {
+    animation: none;
+    transition: none;
+  }
+  
+  .speaker-button:hover,
+  .mode-toggle:hover {
+    transform: none;
+  }
+}
+// Comprehensive language definitions with regional language support
+import type { Language } from "./types.ts";
+
+export const SUPPORTED_LANGUAGES: Language[] = [
+  { code: "auto", name: "Auto-detect", nativeName: "Auto-detect", speechSupported: false, recognitionSupported: false },
+  
+  // Major International Languages
+  { code: "en", name: "English", nativeName: "English", speechSupported: true, recognitionSupported: true, region: "Global" },
+  { code: "es", name: "Spanish", nativeName: "Español", speechSupported: true, recognitionSupported: true, region: "Global" },
+  { code: "fr", name: "French", nativeName: "Français", speechSupported: true, recognitionSupported: true, region: "Global" },
+  { code: "de", name: "German", nativeName: "Deutsch", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "it", name: "Italian", nativeName: "Italiano", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "pt", name: "Portuguese", nativeName: "Português", speechSupported: true, recognitionSupported: true, region: "Global" },
+  { code: "ru", name: "Russian", nativeName: "Русский", speechSupported: true, recognitionSupported: true, region: "Europe/Asia" },
+  { code: "ja", name: "Japanese", nativeName: "日本語", speechSupported: true, recognitionSupported: true, region: "Asia" },
+  { code: "ko", name: "Korean", nativeName: "한국어", speechSupported: true, recognitionSupported: true, region: "Asia" },
+  { code: "zh", name: "Chinese (Simplified)", nativeName: "中文 (简体)", speechSupported: true, recognitionSupported: true, region: "Asia" },
+  { code: "zh-TW", name: "Chinese (Traditional)", nativeName: "中文 (繁體)", speechSupported: true, recognitionSupported: true, region: "Asia" },
+  { code: "ar", name: "Arabic", nativeName: "العربية", speechSupported: true, recognitionSupported: true, region: "Middle East", script: "Arabic" },
+  
+  // Indian Regional Languages
+  { code: "hi", name: "Hindi", nativeName: "हिन्दी", speechSupported: true, recognitionSupported: true, region: "India", script: "Devanagari" },
+  { code: "te", name: "Telugu", nativeName: "తెలుగు", speechSupported: true, recognitionSupported: true, region: "India", script: "Telugu" },
+  { code: "mr", name: "Marathi", nativeName: "मराठी", speechSupported: true, recognitionSupported: true, region: "India", script: "Devanagari" },
+  { code: "ta", name: "Tamil", nativeName: "தமிழ்", speechSupported: true, recognitionSupported: true, region: "India", script: "Tamil" },
+  { code: "bn", name: "Bengali", nativeName: "বাংলা", speechSupported: true, recognitionSupported: true, region: "India", script: "Bengali" },
+  { code: "gu", name: "Gujarati", nativeName: "ગુજરાતી", speechSupported: true, recognitionSupported: true, region: "India", script: "Gujarati" },
+  { code: "kn", name: "Kannada", nativeName: "ಕನ್ನಡ", speechSupported: true, recognitionSupported: true, region: "India", script: "Kannada" },
+  { code: "ml", name: "Malayalam", nativeName: "മലയാളം", speechSupported: true, recognitionSupported: true, region: "India", script: "Malayalam" },
+  { code: "pa", name: "Punjabi", nativeName: "ਪੰਜਾਬੀ", speechSupported: true, recognitionSupported: true, region: "India", script: "Gurmukhi" },
+  { code: "ur", name: "Urdu", nativeName: "اردو", speechSupported: true, recognitionSupported: true, region: "India/Pakistan", script: "Arabic" },
+  { code: "or", name: "Odia", nativeName: "ଓଡ଼ିଆ", speechSupported: true, recognitionSupported: false, region: "India", script: "Odia" },
+  { code: "as", name: "Assamese", nativeName: "অসমীয়া", speechSupported: true, recognitionSupported: false, region: "India", script: "Bengali" },
+  { code: "ne", name: "Nepali", nativeName: "नेपाली", speechSupported: true, recognitionSupported: true, region: "Nepal", script: "Devanagari" },
+  { code: "si", name: "Sinhala", nativeName: "සිංහල", speechSupported: true, recognitionSupported: false, region: "Sri Lanka", script: "Sinhala" },
+  
+  // Southeast Asian Languages
+  { code: "th", name: "Thai", nativeName: "ไทย", speechSupported: true, recognitionSupported: true, region: "Southeast Asia", script: "Thai" },
+  { code: "vi", name: "Vietnamese", nativeName: "Tiếng Việt", speechSupported: true, recognitionSupported: true, region: "Southeast Asia" },
+  { code: "id", name: "Indonesian", nativeName: "Bahasa Indonesia", speechSupported: true, recognitionSupported: true, region: "Southeast Asia" },
+  { code: "ms", name: "Malay", nativeName: "Bahasa Melayu", speechSupported: true, recognitionSupported: true, region: "Southeast Asia" },
+  { code: "fil", name: "Filipino", nativeName: "Filipino", speechSupported: true, recognitionSupported: true, region: "Southeast Asia" },
+  { code: "my", name: "Myanmar", nativeName: "မြန်မာ", speechSupported: true, recognitionSupported: false, region: "Southeast Asia", script: "Myanmar" },
+  { code: "km", name: "Khmer", nativeName: "ខ្មែរ", speechSupported: true, recognitionSupported: false, region: "Southeast Asia", script: "Khmer" },
+  { code: "lo", name: "Lao", nativeName: "ລາວ", speechSupported: true, recognitionSupported: false, region: "Southeast Asia", script: "Lao" },
+  
+  // European Languages
+  { code: "nl", name: "Dutch", nativeName: "Nederlands", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "sv", name: "Swedish", nativeName: "Svenska", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "da", name: "Danish", nativeName: "Dansk", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "no", name: "Norwegian", nativeName: "Norsk", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "fi", name: "Finnish", nativeName: "Suomi", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "pl", name: "Polish", nativeName: "Polski", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "cs", name: "Czech", nativeName: "Čeština", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "sk", name: "Slovak", nativeName: "Slovenčina", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "hu", name: "Hungarian", nativeName: "Magyar", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "ro", name: "Romanian", nativeName: "Română", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "bg", name: "Bulgarian", nativeName: "Български", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "hr", name: "Croatian", nativeName: "Hrvatski", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "sr", name: "Serbian", nativeName: "Српски", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "sl", name: "Slovenian", nativeName: "Slovenščina", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "et", name: "Estonian", nativeName: "Eesti", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "lv", name: "Latvian", nativeName: "Latviešu", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "lt", name: "Lithuanian", nativeName: "Lietuvių", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "el", name: "Greek", nativeName: "Ελληνικά", speechSupported: true, recognitionSupported: true, region: "Europe", script: "Greek" },
+  { code: "tr", name: "Turkish", nativeName: "Türkçe", speechSupported: true, recognitionSupported: true, region: "Europe/Asia" },
+  { code: "uk", name: "Ukrainian", nativeName: "Українська", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  
+  // Middle Eastern Languages
+  { code: "fa", name: "Persian", nativeName: "فارسی", speechSupported: true, recognitionSupported: true, region: "Middle East", script: "Arabic" },
+  { code: "he", name: "Hebrew", nativeName: "עברית", speechSupported: true, recognitionSupported: true, region: "Middle East", script: "Hebrew" },
+  
+  // African Languages
+  { code: "sw", name: "Swahili", nativeName: "Kiswahili", speechSupported: true, recognitionSupported: true, region: "Africa" },
+  { code: "af", name: "Afrikaans", nativeName: "Afrikaans", speechSupported: true, recognitionSupported: true, region: "Africa" },
+  { code: "zu", name: "Zulu", nativeName: "isiZulu", speechSupported: true, recognitionSupported: false, region: "Africa" },
+  { code: "am", name: "Amharic", nativeName: "አማርኛ", speechSupported: true, recognitionSupported: false, region: "Africa", script: "Ethiopic" },
+  
+  // Other Languages
+  { code: "is", name: "Icelandic", nativeName: "Íslenska", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "mt", name: "Maltese", nativeName: "Malti", speechSupported: true, recognitionSupported: false, region: "Europe" },
+  { code: "cy", name: "Welsh", nativeName: "Cymraeg", speechSupported: true, recognitionSupported: true, region: "Europe" },
+  { code: "ga", name: "Irish", nativeName: "Gaeilge", speechSupported: true, recognitionSupported: false, region: "Europe" },
+  { code: "eu", name: "Basque", nativeName: "Euskera", speechSupported: true, recognitionSupported: false, region: "Europe" },
+  { code: "ca", name: "Catalan", nativeName: "Català", speechSupported: true, recognitionSupported: true, region: "Europe" },
+];
+
+// Helper functions
+export function getLanguageByCode(code: string): Language | undefined {
+  return SUPPORTED_LANGUAGES.find(lang => lang.code === code);
+}
+
+export function getLanguagesByRegion(region: string): Language[] {
+  return SUPPORTED_LANGUAGES.filter(lang => lang.region === region);
+}
+
+export function getSpeechSupportedLanguages(): Language[] {
+  return SUPPORTED_LANGUAGES.filter(lang => lang.speechSupported);
+}
+
+export function getRecognitionSupportedLanguages(): Language[] {
+  return SUPPORTED_LANGUAGES.filter(lang => lang.recognitionSupported);
+}
+
+export function getIndianLanguages(): Language[] {
+  return SUPPORTED_LANGUAGES.filter(lang => lang.region === "India");
+}
+// Shared types for the advanced speech & text translation app
+
+export interface Language {
+  code: string;
+  name: string;
+  nativeName: string;
+  script?: string;
+  speechSupported: boolean;
+  recognitionSupported: boolean;
+  region?: string;
+}
+
+export interface Voice {
+  name: string;
+  lang: string;
+  gender?: 'male' | 'female';
+  accent?: string;
+  quality?: 'standard' | 'premium' | 'neural';
+}
+
+export interface TranslationRequest {
+  text: string;
+  from: string;
+  to: string;
+}
+
+export interface TranslationResponse {
+  translatedText: string;
+  detectedLanguage?: string;
+  confidence?: number;
+  pronunciation?: string;
+}
+
+export interface SpeechRecognitionResult {
+  transcript: string;
+  confidence: number;
+  isFinal: boolean;
+  language: string;
+}
+
+export interface SupportedLanguagesResponse {
+  languages: Language[];
+}
+
+export interface VoicesResponse {
+  voices: Voice[];
+}
+
+export interface SpeechSynthesisOptions {
+  text: string;
+  language: string;
+  voice?: string;
+  rate?: number;
+  pitch?: number;
+  volume?: number;
+}
